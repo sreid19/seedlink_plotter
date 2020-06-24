@@ -2,6 +2,7 @@
 from __future__ import print_function
 
 import matplotlib
+
 # Set the backend for matplotlib.
 matplotlib.use("TkAgg")
 matplotlib.rc('figure.subplot', hspace=0)
@@ -23,13 +24,14 @@ from obspy import __version__ as OBSPY_VERSION
 from obspy.core import UTCDateTime
 from obspy.core.event import Catalog
 from obspy.core.util import MATPLOTLIB_VERSION
-from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from math import sin
 import threading
 import time
 import warnings
 import os
 import sys
+
 try:
     # Py3
     from urllib.request import URLError
@@ -39,7 +41,6 @@ except ImportError:
 import logging
 import numpy as np
 
-
 # ugly but simple Python 2/3 compat
 if sys.version_info.major < 3:
     range_func = xrange
@@ -47,7 +48,6 @@ if sys.version_info.major < 3:
 else:
     range_func = range
     input_func = input
-
 
 OBSPY_VERSION = [int(x) for x in OBSPY_VERSION.split(".")[:2]]
 # check obspy version and warn if it's below 0.10.0, which means that a memory
@@ -83,30 +83,35 @@ except AttributeError:
     # method
     def format_seedlink(self):
         return self.formatSeedLink()
+
+
     # add the function in the class
     setattr(UTCDateTime, 'format_seedlink', format_seedlink)
 # SLPacket
 try:
     SLPacket.get_type
 except AttributeError:
-  # create the new get_type fonction using the old getType method
+    # create the new get_type fonction using the old getType method
     def get_type(self):
         return self.getType()
+
+
     # add the function in the class
     setattr(SLPacket, 'get_type', get_type)
 
 try:
     SLPacket.get_trace
 except AttributeError:
-  # create the new get_trace fonction using the old getTrace method
+    # create the new get_trace fonction using the old getTrace method
     def get_trace(self):
         return self.getTrace()
+
+
     # add the function in the class
     setattr(SLPacket, 'get_trace', get_trace)
 
 
 class SeedlinkPlotter(tkinter.Tk):
-
     """
     This module plots realtime seismic data from a Seedlink server
     """
@@ -332,7 +337,6 @@ class SeedlinkPlotter(tkinter.Tk):
         color_list = []
         frequency = 0.3
         for compteur_lignes in range_func(max_color):
-
             red = sin(frequency * compteur_lignes * 2 + 0) * 127 + 128
             green = sin(frequency * compteur_lignes * 2 + 2) * 127 + 128
             blue = sin(frequency * compteur_lignes * 2 + 4) * 127 + 128
@@ -352,7 +356,6 @@ class SeedlinkUpdater(SLClient):
         self.lock = lock
         self.args = myargs
 
-   
     def packet_handler(self, count, slpack):
         """
         for compatibility with obspy 0.10.3 renaming
@@ -430,64 +433,6 @@ class SeedlinkUpdater(SLClient):
         ids.sort()
         return ids
 
-
-class EventUpdater():
-    """
-    Fetch list of seismic events
-    """
-    def __init__(self, stream, events, myargs=None, lock=None):
-        self.stream = stream
-        self.events = events
-        self.args = myargs
-        self.lock = lock
-        warn_msg = "The resource identifier already exists and points to " + \
-                   "another object. It will now point to the object " + \
-                   "referred to by the new resource identifier."
-        warnings.filterwarnings("ignore", warn_msg)
-
-    def run(self):
-        """
-        Endless execution to update events. Does not terminate, to be run in a
-        (daemon) thread.
-        """
-        while True:
-            # no stream, reschedule event update in 20 seconds
-            if not self.stream:
-                time.sleep(20)
-                continue
-            try:
-                events = self.get_events()
-            except URLError as error:
-                msg = "%s: %s\n" % (error.__class__.__name__, error)
-                sys.stderr.write(msg)
-            except Exception as error:
-                msg = "%s: %s\n" % (error.__class__.__name__, error)
-                sys.stderr.write(msg)
-            else:
-                self.update_events(events)
-            time.sleep(self.args.events_update_time * 60)
-
-    def get_events(self):
-        """
-        Method to fetch updated list of events to use in plot.
-        """
-        with self.lock:
-            start = min([tr.stats.starttime for tr in self.stream])
-            end = max([tr.stats.endtime for tr in self.stream])
-        neries_emsc = Client("EMSC")
-        events = neries_emsc.get_events(starttime=start, endtime=end,
-                                          minmagnitude=self.args.events)
-        return events
-
-    def update_events(self, events):
-        """
-        Method to insert new events into list of events shared with the GUI.
-        """
-        with self.lock:
-            self.events.clear()
-            self.events.extend(events)
-
-
 def _parse_time_with_suffix_to_seconds(timestring):
     """
     Parse a string to seconds as float.
@@ -517,36 +462,6 @@ def _parse_time_with_suffix_to_seconds(timestring):
         mult = {'s': 1.0, 'm': 60.0, 'h': 3600.0, 'd': 3600.0 * 24}[suffix]
         return float(timestring) * mult
 
-
-def _parse_time_with_suffix_to_minutes(timestring):
-    """
-    Parse a string to minutes as float.
-
-    If string can be directly converted to a float it is interpreted as
-    minutes. Otherwise the following suffixes can be appended, case
-    insensitive: "s" for seconds, "m" for minutes, "h" for hours, "d" for days.
-
-    >>> _parse_time_with_suffix_to_minutes("12.6")
-    12.6
-    >>> _parse_time_with_suffix_to_minutes("12.6s")
-    0.21
-    >>> _parse_time_with_suffix_to_minutes("12.6m")
-    12.6
-    >>> _parse_time_with_suffix_to_minutes("12.6h")
-    756.0
-
-    :type timestring: str
-    :param timestring: "s" for seconds, "m" for minutes, "h" for hours, "d" for
-        days.
-    :rtype: float
-    """
-    try:
-        return float(timestring)
-    except:
-        seconds = _parse_time_with_suffix_to_seconds(timestring)
-    return seconds / 60.0
-
-
 def main():
     parser = ArgumentParser(prog='seedlink_plotter',
                             description='Plot a realtime seismogram of a station',
@@ -573,8 +488,8 @@ def main():
         default=60)
     parser.add_argument('-b', '--backtrace_time',
                         help='the number of seconds to plot (3600=1h,86400=24h). The '
-                        'following suffixes can be used as well: "m" for minutes, '
-                        '"h" for hours and "d" for days.', required=True,
+                             'following suffixes can be used as well: "m" for minutes, '
+                             '"h" for hours and "d" for days.', required=True,
                         type=_parse_time_with_suffix_to_seconds)
     parser.add_argument('--x_position', type=int,
                         help='the x position of the graph', required=False, default=0)
@@ -606,8 +521,8 @@ def main():
     parser.add_argument(
         '--update_time',
         help='time in seconds between each graphic update.'
-        ' The following suffixes can be used as well: "s" for seconds, '
-        '"m" for minutes, "h" for hours and "d" for days.',
+             ' The following suffixes can be used as well: "s" for seconds, '
+             '"m" for minutes, "h" for hours and "d" for days.',
         required=False, default=10,
         type=_parse_time_with_suffix_to_seconds)
     parser.add_argument('--events', required=False, default=None, type=float,
@@ -671,12 +586,6 @@ def main():
         round_start = round_start + 3600 - args.backtrace_time
         seedlink_client.begin_time = (round_start).format_seedlink()
 
-    else:
-        drum_plot = True
-        if args.time_tick_nb is None:
-            args.time_tick_nb = 13
-        if args.tick_format is None:
-            args.tick_format = '%d/%m/%y %Hh'
     seedlink_client.begin_time = (now - args.backtrace_time).format_seedlink()
 
     seedlink_client.initialize()
@@ -686,14 +595,6 @@ def main():
     thread.setDaemon(True)
     thread.start()
 
-    # start another thread for event updating if requested
-    if args.events is not None:
-        event_updater = EventUpdater(
-            stream=stream, events=events, myargs=args, lock=lock)
-        thread = threading.Thread(target=event_updater.run)
-        thread.setDaemon(True)
-        thread.start()
-
     # Wait few seconds to get data for the first plot
     time.sleep(2)
 
@@ -701,6 +602,7 @@ def main():
                              lock=lock, drum_plot=drum_plot,
                              trace_ids=ids)
     master.mainloop()
+
 
 if __name__ == '__main__':
     main()
