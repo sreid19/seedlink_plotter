@@ -2,6 +2,8 @@
 from __future__ import print_function
 
 import matplotlib
+import scipy
+from scipy import signal
 
 # Set the backend for matplotlib.
 matplotlib.use("TkAgg")
@@ -195,7 +197,7 @@ class SeedlinkPlotter(tkinter.Tk):
         with self.lock:
             # leave some data left of our start for possible processing
             self.stream.trim(
-                starttime=self.start_time - 120, nearest_sample=False)
+                starttime=self.start_time - self.args.backtrace_time, nearest_sample=False)
             stream = self.stream.copy()
 
         try:
@@ -209,7 +211,41 @@ class SeedlinkPlotter(tkinter.Tk):
                             pad=True, nearest_sample=False)
             else:
                 stream.merge(-1)
+                for i in range(0, len(stream.traces)):
+                    print(len(stream.traces[i].data))
+                #     window_len = len(stream.traces[i].data) // 2
+                #     window_len -= (window_len % 2)
+                #     if len(stream.traces[i].data) > window_len:
+                #         hw = np.hanning(window_len)
+                #         hw = np.split(hw, 2)
+                #         hw = hw[0]
+                #         hw_num = len(stream.traces[i].data) - window_len / 2
+                #         hw_num = int(hw_num)
+                #         new = np.tile(1, hw_num)
+                #         hwp = np.append(hw, new)
+                #         stream.traces[i].data = stream.traces[i].data * hwp
+                # print(stream.traces[0].data)
+                # spike_array = np.zeros(len(stream.traces[0].data))
+                # spike_array[10000:] = stream.traces[0].data[10000:]
+                # stream.traces[0].data = spike_array
+                # .append(stream.traces[0].data[1000:])
+                # print(stream.traces[0].data)
+                # print(len(stream.traces[0].data))
+                stream.filter("lowpass", freq=0.1)
+                stream.filter("highpass", freq=0.01)
+                # print(len(stream.traces[0].data))
+                # for i in range(0, len(stream.traces)):
+                #     flat_len = int(len(stream.traces[i].data) / 3)
+                #     mean_val = np.mean(stream.traces[i].data[len(stream.traces[i].data) // 2:])
+                #     flat_start = np.zeros(len(stream.traces[i].data))
+                #     for j in range(flat_len):
+                #         flat_start[j] = mean_val
+                #     # [flat_start[i] = mean_val for i in range(flat_len)]
+                #     stream.traces[i].data[0:flat_len] = flat_start[0:flat_len]
                 stream.trim(starttime=self.start_time, endtime=self.stop_time)
+            # f = open("earthquake_data.txt", "a")
+            # f.write("write\n")
+            # f.close()
             if self.drum_plot:
                 self.plot_drum(stream)
             else:
@@ -218,29 +254,6 @@ class SeedlinkPlotter(tkinter.Tk):
             logging.error(e)
             pass
         self.after(int(self.args.update_time * 1000), self.plot_graph)
-
-    def plot_drum(self, stream):
-        title = stream[0].id
-        if self.scale:
-            title += ' - scale: ' + str(self.scale) + ' -'
-        else:
-            title += ' - autoscale -'
-        title += " without filtering"
-        self.figure.clear()
-        stream.plot(
-            fig=self.figure, type='dayplot', interval=self.args.x_scale,
-            number_of_ticks=self.args.time_tick_nb, tick_format=self.args.tick_format,
-            size=(self.args.x_size, self.args.y_size),
-            x_labels_size=8, y_labels_size=8,
-            title=title, title_size=14,
-            linewidth=0.5, right_vertical_labels=False,
-            vertical_scaling_range=self.args.scale,
-            subplots_adjust_left=0.04, subplots_adjust_right=0.99,
-            subplots_adjust_top=0.95, subplots_adjust_bottom=0.05,
-            one_tick_per_line=True,
-            color=self.color,
-            show_y_UTC_label=False,
-            events=self.events)
 
     def plot_lines(self, stream):
         for id_ in self.ids:
@@ -306,6 +319,9 @@ class SeedlinkPlotter(tkinter.Tk):
             ax.grid(True, axis="x")
             if len(ax.lines) == 1:
                 ydata = ax.lines[0].get_ydata()
+                f = open("data.txt", "a")
+                f.write(str(ydata))
+                f.close()
                 # if station has no data we add a dummy trace and we end up in
                 # a line with either 2 or 4 zeros (2 if dummy line is cut off
                 # at left edge of time axis)
@@ -433,6 +449,7 @@ class SeedlinkUpdater(SLClient):
         ids.sort()
         return ids
 
+
 def _parse_time_with_suffix_to_seconds(timestring):
     """
     Parse a string to seconds as float.
@@ -461,6 +478,15 @@ def _parse_time_with_suffix_to_seconds(timestring):
         timestring, suffix = timestring[:-1], timestring[-1].lower()
         mult = {'s': 1.0, 'm': 60.0, 'h': 3600.0, 'd': 3600.0 * 24}[suffix]
         return float(timestring) * mult
+
+
+def _parse_time_with_suffix_to_minutes(timestring):
+    try:
+        return float(timestring)
+    except:
+        seconds = _parse_time_with_suffix_to_seconds(timestring)
+    return seconds / 60.0
+
 
 def main():
     parser = ArgumentParser(prog='seedlink_plotter',
