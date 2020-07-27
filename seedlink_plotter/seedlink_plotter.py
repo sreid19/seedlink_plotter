@@ -159,6 +159,8 @@ class SeedlinkPlotter(tkinter.Tk):
         self.events = events
         self.drum_plot = drum_plot
         self.ids = trace_ids
+        self.threshold = args.threshold
+        self.lookback = args.lookback
 
         # Colors
         if args.rainbow:
@@ -186,13 +188,8 @@ class SeedlinkPlotter(tkinter.Tk):
 
     def plot_graph(self):
         now = UTCDateTime()
-        if self.drum_plot:
-            self.stop_time = UTCDateTime(
-                now.year, now.month, now.day, now.hour, 0, 0) + 3600
-            self.start_time = self.stop_time - self.args.backtrace_time
-        else:
-            self.start_time = now - self.backtrace
-            self.stop_time = now
+        self.start_time = now - self.backtrace
+        self.stop_time = now
 
         with self.lock:
             # leave some data left of our start for possible processing
@@ -205,57 +202,55 @@ class SeedlinkPlotter(tkinter.Tk):
             if not stream:
                 raise Exception("Empty stream for plotting")
 
-            if self.drum_plot or OBSPY_VERSION < [0, 10]:
-                stream.merge()
-                stream.trim(starttime=self.start_time, endtime=self.stop_time,
-                            pad=True, nearest_sample=False)
-            else:
-                stream.merge(-1)
-                for i in range(0, len(stream.traces)):
-                    print(len(stream.traces[i].data))
-                #     window_len = len(stream.traces[i].data) // 2
-                #     window_len -= (window_len % 2)
-                #     if len(stream.traces[i].data) > window_len:
-                #         hw = np.hanning(window_len)
-                #         hw = np.split(hw, 2)
-                #         hw = hw[0]
-                #         hw_num = len(stream.traces[i].data) - window_len / 2
-                #         hw_num = int(hw_num)
-                #         new = np.tile(1, hw_num)
-                #         hwp = np.append(hw, new)
-                #         stream.traces[i].data = stream.traces[i].data * hwp
-                # print(stream.traces[0].data)
-                # spike_array = np.zeros(len(stream.traces[0].data))
-                # spike_array[10000:] = stream.traces[0].data[10000:]
-                # stream.traces[0].data = spike_array
-                # .append(stream.traces[0].data[1000:])
-                # print(stream.traces[0].data)
-                # print(len(stream.traces[0].data))
-                stream.filter("lowpass", freq=0.1)
-                stream.filter("highpass", freq=0.01)
-                # print(len(stream.traces[0].data))
-                # for i in range(0, len(stream.traces)):
-                #     flat_len = int(len(stream.traces[i].data) / 3)
-                #     mean_val = np.mean(stream.traces[i].data[len(stream.traces[i].data) // 2:])
-                #     flat_start = np.zeros(len(stream.traces[i].data))
-                #     for j in range(flat_len):
-                #         flat_start[j] = mean_val
-                #     # [flat_start[i] = mean_val for i in range(flat_len)]
-                #     stream.traces[i].data[0:flat_len] = flat_start[0:flat_len]
-                stream.trim(starttime=self.start_time, endtime=self.stop_time)
-            # f = open("earthquake_data.txt", "a")
-            # f.write("write\n")
-            # f.close()
-            if self.drum_plot:
-                self.plot_drum(stream)
-            else:
-                self.plot_lines(stream)
+            stream.merge(-1)
+            for i in range(0, len(stream.traces)):
+                flat_len = int(len(stream.traces[i].data) / 3) #Make first third of data the mean value to remove
+                                                                #the startup transient
+                window_len = len(stream.traces[i].data) // 2
+                window_len -= (window_len % 2) #Make sure window length is an even number
+                if len(stream.traces[i].data) > window_len:
+                    hw = np.hanning(window_len) #Hanning window size of window length
+                    hw = np.split(hw, 2)
+                    hw = hw[0]
+                    hw_num = len(stream.traces[i].data) - window_len / 2 #Only first half of hanning window, don't want
+                    #the right side of the data to be impacted (only care about the most receent n seconds of data)
+                    hw_num = int(hw_num)
+                    new = np.tile(1, hw_num) #Make everything after the hanning window one, don't want most recent n
+                                            #seconds to be impacted
+                    hwp = np.append(hw, new)
+                    stream.traces[i].data = stream.traces[i].data * hwp #Apply window
+            stream.filter("lowpass", freq=0.1)
+            stream.filter("highpass", freq=0.01)
+            threshold = self.threshold #200 nm/s normally, can be changed in the parameters
+            index_list = []
+            for i in range(0, len(stream.traces)):
+                looking = int(stream.traces[i].stats.sampling_rate * self.lookback) #How far back to look for
+                #earthquakes, any earthquakes above the threshold within this time will trigger the warning
+                flat_len = int(len(stream.traces[i].data) / 3) #Length of flattening (1st third by default)
+                mean_val = np.mean(stream.traces[i].data[len(stream.traces[i].data) // 2:]) #Get the mean value
+                flat_start = np.zeros(len(stream.traces[i].data)) #Make the array
+                for j in range(flat_len):
+                    flat_start[j] = mean_val #Make array the mean value instead of 0 to keep the intereface from
+                                            #zooming in too far
+                # [flat_start[i] = mean_val for i in range(flat_len)]
+                stream.traces[i].data[0:flat_len] = flat_start[0:flat_len]
+                for j in range(-1, -int(looking), -1):
+                    if stream.traces[i].data[j] > threshold:
+                        index_list.append(stream.traces[i]) #If threshold is surpassed within the lookback time,
+                        #put the trace ID in a list to pass to the plot_lines function
+                        print("WARNING: MAX THRESHOLD VALUE SURPASSED")
+            stream.trim(starttime=self.start_time, endtime=self.stop_time)
+            np.set_printoptions(threshold=np.inf)
+            #with open("seismic_data.txt", "w") as file:
+                #for i in range(0, len(stream.traces)):
+                    #file.write(str(stream.traces[i].data) + "\n" + "\n" + "\n") #Option to write data to a file
+            self.plot_lines(stream, index_list)
         except Exception as e:
             logging.error(e)
             pass
         self.after(int(self.args.update_time * 1000), self.plot_graph)
 
-    def plot_lines(self, stream):
+    def plot_lines(self, stream, index_list):
         for id_ in self.ids:
             if not any([tr.id == id_ for tr in stream]):
                 net, sta, loc, cha = id_.split(".")
@@ -319,16 +314,12 @@ class SeedlinkPlotter(tkinter.Tk):
             ax.grid(True, axis="x")
             if len(ax.lines) == 1:
                 ydata = ax.lines[0].get_ydata()
-                f = open("data.txt", "a")
-                f.write(str(ydata))
-                f.close()
                 # if station has no data we add a dummy trace and we end up in
                 # a line with either 2 or 4 zeros (2 if dummy line is cut off
                 # at left edge of time axis)
                 if len(ydata) in [4, 2] and not ydata.any():
-                    plt.setp(ylabels, visible=False)
                     if MATPLOTLIB_VERSION[0] >= 2:
-                        ax.set_facecolor("#ff6666")
+                        ax.set_facecolor("k") #Traces with no data turn black
                     else:
                         ax.set_axis_bgcolor("#ff6666")
         if OBSPY_VERSION >= [0, 10]:
@@ -338,6 +329,13 @@ class SeedlinkPlotter(tkinter.Tk):
             bbox["alpha"] = 0.6
         fig.text(0.99, 0.97, self.stop_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
                  ha="right", va="top", bbox=bbox, fontsize="medium")
+        for i in index_list:
+            count = 0
+            for j in stream:
+                if i == j:
+                    fig.axes[count].set_facecolor('r') #Plots that surpass the threshold within the lookback time
+                                                        #turn red
+                count += 1
         fig.canvas.draw()
 
     def rgb_to_hex(self, red_value, green_value, blue_value):
@@ -533,6 +531,10 @@ def main():
         '--tick_format', type=str, help='the tick format of time legend ', required=False, default=None)
     parser.add_argument(
         '--time_tick_nb', type=int, help='the number of time tick', required=False)
+    parser.add_argument(
+        '--threshold', type=int, help='maximum ground speed', required=True)
+    parser.add_argument(
+        '--lookback', type=int, help='how far back IN SECONDS (integer) the plotter checks for earthquakes', required=True)
     parser.add_argument(
         '--without-decoration', required=False, action='store_true',
         help=('the graph window will have no decorations. that means the '
