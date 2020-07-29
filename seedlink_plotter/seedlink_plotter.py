@@ -226,6 +226,8 @@ class SeedlinkPlotter(tkinter.Tk):
             for i in range(0, len(stream.traces)):
                 looking = int(stream.traces[i].stats.sampling_rate * self.lookback) #How far back to look for
                 #earthquakes, any earthquakes above the threshold within this time will trigger the warning
+                if looking > len(stream.traces[i].data):
+                    raise ValueError("Lookback too far, not enough data")
                 flat_len = int(len(stream.traces[i].data) / 3) #Length of flattening (1st third by default)
                 mean_val = np.mean(stream.traces[i].data[len(stream.traces[i].data) // 2:]) #Get the mean value
                 flat_start = np.zeros(len(stream.traces[i].data)) #Make the array
@@ -234,11 +236,14 @@ class SeedlinkPlotter(tkinter.Tk):
                                             #zooming in too far
                 # [flat_start[i] = mean_val for i in range(flat_len)]
                 stream.traces[i].data[0:flat_len] = flat_start[0:flat_len]
+                counter = 0
                 for j in range(-1, -int(looking), -1):
                     if stream.traces[i].data[j] > threshold:
+                        counter += 1
                         index_list.append(stream.traces[i]) #If threshold is surpassed within the lookback time,
                         #put the trace ID in a list to pass to the plot_lines function
-                        print("WARNING: MAX THRESHOLD VALUE SURPASSED")
+                        if counter == 1:
+                            print("WARNING: MAX THRESHOLD VALUE SURPASSED")
             stream.trim(starttime=self.start_time, endtime=self.stop_time)
             np.set_printoptions(threshold=np.inf)
             #with open("seismic_data.txt", "w") as file:
@@ -247,7 +252,7 @@ class SeedlinkPlotter(tkinter.Tk):
             self.plot_lines(stream, index_list)
         except Exception as e:
             logging.error(e)
-            pass
+            raise e
         self.after(int(self.args.update_time * 1000), self.plot_graph)
 
     def plot_lines(self, stream, index_list):
